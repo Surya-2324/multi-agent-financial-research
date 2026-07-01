@@ -5,3 +5,12 @@ __pycache__/
 chroma_db/
 data/raw/
 *.log
+chroma_db*/
+data/
+audit_logs/
+mlflow.db
+mlruns/
+*.txt
+__pycache__/
+.env
+venv/
