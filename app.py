@@ -4,6 +4,7 @@
 # ================================================================
 
 import os
+import re
 import time
 import requests
 import traceback
@@ -165,6 +166,98 @@ def get_vectorstore(ticker: str):
                                collection_name=collection)
     _vectorstores[ticker] = vs
     return vs
+
+def retrieve_10k_context(ticker: str, question: str, k: int = 4):
+    cik = get_cik(ticker)
+    if not cik:
+        return None
+
+    text = download_10k(cik, ticker)
+    if not text:
+        return None
+
+    terms = {
+        term for term in re.findall(r"[a-zA-Z][a-zA-Z0-9]{2,}", question.lower())
+        if term not in {"the", "and", "for", "with", "that", "this", "from", "what", "how", "are"}
+    }
+    chunk_size = 1600
+    stride = 1200
+    chunks = [text[i:i + chunk_size] for i in range(0, len(text), stride)]
+
+    scored = []
+    for idx, chunk in enumerate(chunks):
+        lower = chunk.lower()
+        score = sum(lower.count(term) for term in terms)
+        if score:
+            scored.append((score, idx, chunk))
+
+    if not scored:
+        return "\n\n".join(chunks[:k])
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return "\n\n".join(chunk for _, _, chunk in scored[:k])
+
+def get_live_data(ticker: str):
+    try:
+        info = yf.Ticker(ticker).info
+    except Exception:
+        info = {}
+    return {
+        "company":        info.get("longName", ticker),
+        "current_price":  info.get("currentPrice", "N/A"),
+        "market_cap":     info.get("marketCap", "N/A"),
+        "pe_ratio":       info.get("trailingPE", "N/A"),
+        "forward_pe":     info.get("forwardPE", "N/A"),
+        "52w_high":       info.get("fiftyTwoWeekHigh", "N/A"),
+        "52w_low":        info.get("fiftyTwoWeekLow", "N/A"),
+        "recommendation": info.get("recommendationKey", "N/A"),
+    }
+
+def run_lightweight_analysis(ticker: str, question: str):
+    timings = {}
+
+    t0 = time.time()
+    planner_prompt = f"Question: {question}\nBreak into 3 research tasks. Numbered list only."
+    plan_response = llm.invoke(planner_prompt)
+    plan = [l.strip() for l in plan_response.content.split("\n") if l.strip() and l[0].isdigit()]
+    timings["planner"] = round(time.time() - t0, 2)
+
+    t0 = time.time()
+    context = retrieve_10k_context(ticker, question)
+    if not context:
+        return None
+    rag_prompt = f"""Use ONLY this 10-K context. Cite specific numbers.
+CONTEXT:
+{context}
+
+QUESTION: {question}
+
+Key findings:"""
+    rag_response = llm.invoke(rag_prompt)
+    timings["rag"] = round(time.time() - t0, 2)
+
+    t0 = time.time()
+    live_data = get_live_data(ticker)
+    timings["data"] = round(time.time() - t0, 2)
+
+    t0 = time.time()
+    live = (f"Company: {live_data['company']}\nPrice: ${live_data['current_price']}\n"
+            f"Market Cap: {live_data['market_cap']}\nP/E: {live_data['pe_ratio']}\n"
+            f"52w Range: ${live_data['52w_low']} - ${live_data['52w_high']}\n"
+            f"Rating: {live_data['recommendation']}")
+    analyst_prompt = f"""Senior investment analyst. Question: {question}
+RESEARCH PLAN: {plan}
+HISTORICAL (10-K): {rag_response.content}
+LIVE DATA: {live}
+Write investment brief: 1. Summary 2. Key Strengths 3. Valuation 4. Recommendation"""
+    analyst_response = llm.invoke(analyst_prompt)
+    timings["analyst"] = round(time.time() - t0, 2)
+
+    return {
+        "final_report": analyst_response.content,
+        "timings": timings,
+        "live_data": live_data,
+    }
 
 # ════════════════════════════════════════════════════════════════
 # 4-AGENT SYSTEM
@@ -333,17 +426,10 @@ def api_analyse(req: AnalyseRequest):
         if config_error:
             return {"error": config_error}
 
-        vs = get_vectorstore(ticker)
-        if vs is None:
-            return {"error": f"Could not load 10-K for {ticker}. It may be a foreign company filing a 20-F instead of 10-K."}
-        _holder.current = vs
-
         total_start = time.time()
-        result = _agent_app.invoke({
-            "question": req.question, "ticker": ticker,
-            "plan": [], "rag_results": "", "live_data": {},
-            "final_report": "", "timings": {},
-        })
+        result = run_lightweight_analysis(ticker, req.question)
+        if result is None:
+            return {"error": f"Could not load 10-K for {ticker}. It may be a foreign company filing a 20-F instead of 10-K."}
         total_time = round(time.time() - total_start, 2)
 
         if MLFLOW_ENABLED:

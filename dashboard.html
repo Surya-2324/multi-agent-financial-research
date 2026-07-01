@@ -615,18 +615,21 @@ async function runAnalysis() {
 
     if (res.error) {
       out.innerHTML = `<div style="color:var(--rose)">Error: ${res.error}</div>`;
+    } else if (!res.report) {
+      out.innerHTML = `<div style="color:var(--rose)">Error: Unexpected backend response: ${JSON.stringify(res)}</div>`;
     } else {
+      const timings = res.timings || {};
       steps.forEach(a => {
         const el = document.querySelector(`[data-agent="${a}"]`);
         el.classList.remove("active"); el.classList.add("done");
-        if (res.timings[a]) el.querySelector(".agent-time").textContent = res.timings[a] + "s";
+        el.querySelector(".agent-time").textContent = timings[a] ? timings[a] + "s" : "N/A";
       });
       let report = res.report
         .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
         .replace(/^(\d+\.\s.*?)$/gm, "<strong>$1</strong>");
       out.innerHTML = report +
         `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;font-family:'IBM Plex Mono',monospace;">
-         ✓ Logged to MLflow · Total: ${res.total_time}s · Planner ${res.timings.planner}s · RAG ${res.timings.rag}s · Data ${res.timings.data}s · Analyst ${res.timings.analyst}s</div>`;
+         ✓ Logged to MLflow · Total: ${res.total_time ?? "N/A"}s · Planner ${timings.planner ?? "N/A"}s · RAG ${timings.rag ?? "N/A"}s · Data ${timings.data ?? "N/A"}s · Analyst ${timings.analyst ?? "N/A"}s</div>`;
     }
   } catch(e) {
     clearInterval(anim);
