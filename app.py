@@ -11,6 +11,7 @@ from typing import TypedDict, List
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import yfinance as yf
@@ -60,7 +61,16 @@ embeddings = HuggingFaceEmbeddings(
 )
 print("✅ Embeddings ready")
 
+# ── FASTAPI + CORS ────────────────────────────────────────────────
 app = FastAPI(title="Atlas — Financial Research Dashboard")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _vectorstores = {}
 _company_list = None
@@ -338,7 +348,7 @@ def api_analyse(req: AnalyseRequest):
 # ════════════════════════════════════════════════════════════════
 # DASHBOARD HTML
 # ════════════════════════════════════════════════════════════════
-with open(os.path.join(os.path.dirname(__file__), "dashboard.html"), encoding="utf-8") as f:
+with open("dashboard.html", encoding="utf-8") as f:
     DASHBOARD_HTML = f.read()
 
 @app.get("/", response_class=HTMLResponse)
