@@ -52,6 +52,24 @@ llm = ChatGroq(
     temperature=0,
     api_key=GROQ_API_KEY
 )
+
+def groq_config_error():
+    if not GROQ_API_KEY or not GROQ_API_KEY.strip():
+        return (
+            "Groq API key is missing on the backend. Set the Railway "
+            "environment variable GROQ_API_KEY to a valid Groq key, then "
+            "redeploy or restart the service."
+        )
+    return None
+
+def is_groq_auth_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "invalid api key" in message
+        or "invalid_api_key" in message
+        or "authentication" in message
+        or "401" in message
+    )
 print("✅ Groq LLM ready")
 
 # ── Embeddings — HuggingFace (local, free) ────────────────────────
@@ -311,6 +329,10 @@ class AnalyseRequest(BaseModel):
 def api_analyse(req: AnalyseRequest):
     ticker = req.ticker.upper()
     try:
+        config_error = groq_config_error()
+        if config_error:
+            return {"error": config_error}
+
         vs = get_vectorstore(ticker)
         if vs is None:
             return {"error": f"Could not load 10-K for {ticker}. It may be a foreign company filing a 20-F instead of 10-K."}
@@ -343,6 +365,14 @@ def api_analyse(req: AnalyseRequest):
         }
     except Exception as e:
         traceback.print_exc()
+        if is_groq_auth_error(e):
+            return {
+                "error": (
+                    "Groq rejected the API key configured on Railway. "
+                    "Replace GROQ_API_KEY with a valid Groq API key and "
+                    "redeploy or restart the service."
+                )
+            }
         return {"error": str(e)}
 
 # ════════════════════════════════════════════════════════════════
